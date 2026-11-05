@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 const root = new URL('../', import.meta.url);
 const read = path => fs.readFileSync(new URL(path, root), 'utf8');
 
-test('browser seccomp only adds the three documented namespace syscalls to Docker default', () => {
+test('browser seccomp only adds namespace and chroot syscalls needed by Chromium sandbox', () => {
     assert.ok(fs.existsSync(new URL('security/seccomp-chromium.json', root)), 'explicit sandbox-compatible profile is required');
     const baselineText = read('test/fixtures/seccomp-moby-28.0.4.json');
     assert.equal(crypto.createHash('sha256').update(baselineText).digest('hex'), '9c1025c88ccaa517b648da571961838744ea2137f176bfe6a48b21294cae9c76');
@@ -15,7 +15,7 @@ test('browser seccomp only adds the three documented namespace syscalls to Docke
     assert.equal(profile.defaultAction, 'SCMP_ACT_ERRNO');
     const extra = profile.syscalls.pop();
     assert.deepEqual(extra, {
-        names: ['clone', 'setns', 'unshare'],
+        names: ['clone', 'setns', 'unshare', 'chroot'],
         action: 'SCMP_ACT_ALLOW',
         comment: 'Allow Chromium to create its own unprivileged user namespace sandbox.'
     });

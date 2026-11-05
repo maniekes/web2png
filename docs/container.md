@@ -44,8 +44,12 @@ apply privileged/no-sandbox recipes automatically.
 
 The initial GitHub runner failed the namespace/browser probes under Docker's
 built-in policy. `security/seccomp-chromium.json` preserves the Moby v28.0.4
-Docker default profile, adding only `clone`, `setns` and `unshare` permissions
-so Chromium can construct its own unprivileged namespace sandbox. The baseline
+Docker default profile, adding only `clone`, `setns`, `unshare` and `chroot`
+permissions so Chromium can construct its own unprivileged namespace sandbox.
+The real CI launch confirmed Chromium also needs `chroot` inside its new user
+namespace; Docker's default allows that syscall only with container CAP_SYS_CHROOT,
+which remains dropped here. The kernel still enforces chroot's capability check;
+no capability is added to the initial container namespace. The baseline
 is in `test/fixtures/seccomp-moby-28.0.4.json`; its SHA-256 and the exact delta
 are checked by `test/runtime-policy.test.js`. This expands the permitted syscall
 surface and needs review, but does not add container capabilities or turn off

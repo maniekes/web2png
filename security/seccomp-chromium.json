@@ -833,7 +833,8 @@
       "names": [
         "clone",
         "setns",
-        "unshare"
+        "unshare",
+        "chroot"
       ],
       "action": "SCMP_ACT_ALLOW",
       "comment": "Allow Chromium to create its own unprivileged user namespace sandbox."
