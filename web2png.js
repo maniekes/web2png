@@ -147,6 +147,30 @@ app.get('/screenshot', async (req, res) => {
     console.log();
 });
 
-app.listen(configPort, () => {
-    console.log(`Server running at http://localhost:${configPort}`);
+app.get('/healthz', (req, res) => {
+    try {
+        loadConfig(configPath);
+        res.json({status: 'ok'});
+    } catch {
+        res.status(503).json({status: 'unavailable'});
+    }
 });
+
+const server = app.listen(configPort, () => {
+    console.log(`Server running at http://localhost:${server.address().port}`);
+});
+
+let shuttingDown = false;
+function shutdown() {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // Stop accepting requests; allow existing responses/browser cleanup to finish.
+    server.close(() => { process.exitCode = 0; });
+    // Puppeteer also handles SIGTERM. Do not exit early before it closes Chrome.
+    setTimeout(() => {
+        console.error('Shutdown deadline exceeded.');
+        server.closeAllConnections();
+        process.exit(1);
+    }, 10_000).unref();
+}
+process.on('SIGTERM', shutdown);

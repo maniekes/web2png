@@ -1,0 +1,7 @@
+# Allowlist: no configuration, fixtures, credentials, git or local dependencies.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!web2png.js

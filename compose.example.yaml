@@ -1,0 +1,35 @@
+# Example only: not a deployment. See docs/container.md for blockers.
+services:
+  web2png:
+    build:
+      context: .
+    image: web2png:local
+    platform: linux/amd64
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,mode=1777
+      - /home/node:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=700
+    shm_size: 256mb
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./security/seccomp-chromium.json
+      # On an AppArmor host: load the dedicated profile first, then add
+      # - apparmor=web2png-browser
+      # See docs/container.md; never use apparmor=unconfined as a fallback.
+    environment:
+      CONFIG_FILE: /config/device-mappings.yaml
+      CONFIG_PORT: "3001"
+    ports:
+      # Proposed loopback-only port; availability has NOT been checked.
+      - "127.0.0.1:13001:3001"
+    volumes:
+      - type: bind
+        source: ${WEB2PNG_CONFIG:?Set WEB2PNG_CONFIG to an absolute private config path}
+        target: /config/device-mappings.yaml
+        read_only: true
+        bind:
+          create_host_path: false

@@ -3,6 +3,13 @@
 `Web2PNG` is a lightweight web server that captures and serves web pages as PNG images, enabling easy integration with
 devices or systems that require static image representations of dynamic web content.
 
+## Container usage
+
+See [container build, compatibility tests and the Compose example](docs/container.md).
+The image keeps the current locked dependencies and browser; it does not publish or
+start a deployment automatically. Review the sandbox requirements and legacy-browser
+risk before use.
+
 ## Background
 
 I have a few EspHome devices that display weather, home status, temperatures, etc. While I enjoy using EspHome, I find
