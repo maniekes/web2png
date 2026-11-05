@@ -1,0 +1,12 @@
+default:
+  resolution: '32x24'
+  delay: 0
+  grayscale: false
+  negate: false
+devices:
+  fixture:
+    url: 'http://127.0.0.1:8080/fixture'
+  slow:
+    url: 'http://127.0.0.1:8080/slow'
+  broken:
+    url: 'http://127.0.0.1:8080/fail/fixture'
