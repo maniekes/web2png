@@ -1,41 +1,27 @@
 name: Container compatibility CI
 on:
   push:
-    branches: [feat/containerize-web2png]
+    branches: [feat/containerize-web2png, feat/publish-ghcr, master]
   pull_request:
 permissions:
   contents: read
 concurrency:
   group: container-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a master push midway through publishing the two tags.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 jobs:
-  container:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Build local image (no registry publishing)
-        run: docker build --platform linux/amd64 --tag web2png:ci .
-      - name: Load dedicated browser AppArmor profile on the ephemeral runner
-        run: sudo apparmor_parser -r security/apparmor-web2png
-      - name: Read-only namespace diagnostics
-        run: |
-          docker version --format '{{.Server.Version}}'
-          docker info --format '{{json .SecurityOptions}}'
-          for key in kernel.unprivileged_userns_clone kernel.apparmor_restrict_unprivileged_userns user.max_user_namespaces; do
-            sysctl "$key" || true
-          done
-          echo 'Host user namespace probe:'
-          unshare --user --map-root-user true || true
-          echo 'Container user namespace probe under intended restrictions:'
-          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --security-opt seccomp=security/seccomp-chromium.json --security-opt apparmor=web2png-browser --entrypoint /bin/sh web2png:ci -c 'id; cat /proc/self/attr/current; unshare --user --map-root-user true'
-      - name: Test sandbox, health, real rendering and lifecycle
-        env:
-          TEST_APPARMOR_PROFILE: web2png-browser
-        run: python3 test/container-smoke.py
-      - name: Unload the dedicated profile
-        if: always()
-        run: sudo apparmor_parser -R security/apparmor-web2png
+  test:
+    if: "!(github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'maniekes/web2png')"
+    permissions:
+      contents: read
+    uses: ./.github/workflows/container-build.yml
+    with:
+      publish: false
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'maniekes/web2png'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/container-build.yml
+    with:
+      publish: true

@@ -1,9 +1,10 @@
-# Container build and compatibility checks
+# Container publishing and pull-only deployment
 
-This change keeps web2png **1.0.4 and its existing package-lock.json**. It does not
-publish an image, update dependencies or deploy a service. The intended sequence is
-feature-branch CI, review/merge, then a separately executed Compose deployment
-using these same application/browser versions. Version upgrades are a later task.
+This change keeps web2png **1.0.4 and its existing package-lock.json**. After
+review/merge, successful `master` CI publishes the tested image to
+`ghcr.io/maniekes/web2png`; it does not deploy a service or create a GitHub/npm
+release. Feature branches and PRs only build/test. Dependency/browser upgrades
+remain a separate task.
 
 ## Image and browser
 
@@ -103,32 +104,112 @@ The test checks:
   navigation; stopped containers must have exit code 0 (not a forced kill).
 
 A failed browser launch fails the job; it is never replaced with a mock PNG.
-The Actions workflow runs on GitHub-hosted Ubuntu for feature-branch pushes and
-pull requests, uses a verified checkout action commit with credentials not persisted,
-and grants only `contents: read`. There is no registry login, push, publish, secret,
-self-hosted runner or deployment step. The existing release/npm workflow is unchanged.
+The Actions entry workflow runs on GitHub-hosted Ubuntu 24.04 for pushes to
+`feat/containerize-web2png`, `feat/publish-ghcr`, `master`, and for pull requests.
+Both job paths call the same local reusable build/test workflow. Feature/PR jobs
+have only `contents: read`, never authenticate to GHCR and never publish. Only
+upstream `maniekes/web2png` master pushes select the job with `packages: write`.
+Checkout stays pinned to the previously verified commit and does not persist
+credentials. AppArmor cleanup runs even after test failures.
+
+After all checks and cleanup succeed, that master job logs into GHCR using the
+GitHub-provided `GITHUB_TOKEN` via stdin, tags the **same local image ID** tested as
+`web2png:ci`, and pushes `sha-<full-commit-SHA>` followed by `latest`. There is no
+second build, artifact transfer, PAT, additional third-party action, self-hosted
+runner or production deployment. Source/revision OCI labels identify the build.
+Master runs are serialized without cancellation; a stale revision is refused
+before publication. A run that already published its SHA tag refuses to overwrite
+it. If only the SHA push succeeded, recovery of `latest` needs owner review; do not
+silently rebuild/replace that SHA. GHCR tags are not registry-enforced immutable:
+use a manifest digest for a strict content pin. Remote manifest reads in CI use
+credentials and are **not evidence of public availability**.
+
+The existing release/npm workflow is untouched; no release is created here.
+
+### First publication is not public visibility
+
+1. Review the PR and its real container CI, then merge. The first successful
+   upstream master run creates/pushes the package; before that, pulls may fail
+   because the image does not exist. If a package with this name already exists,
+   its owner must ensure this repository has Actions write access to it.
+2. GitHub defaults a new container package to **private**, even for a public
+   repository. The package owner must open the `web2png` package's **Package
+   settings → Change visibility → Public** and confirm. Public visibility cannot
+   subsequently be reverted to private. The workflow does not change visibility.
+3. Verify anonymous access from a client without saved GHCR credentials, for both
+   `latest` and the published SHA tag. On an authorized Docker client/host:
+
+   ```sh
+   # Replace the placeholder with the actual published commit SHA.
+   sha=FULL_PUBLISHED_COMMIT_SHA
+   anonymous_config=$(mktemp -d)
+   docker --config "$anonymous_config" manifest inspect ghcr.io/maniekes/web2png:latest
+   docker --config "$anonymous_config" manifest inspect "ghcr.io/maniekes/web2png:sha-$sha"
+   docker --config "$anonymous_config" pull --platform linux/amd64 "ghcr.io/maniekes/web2png:sha-$sha"
+   rm -rf "$anonymous_config"
+   ```
+
+   Record the successful anonymous pull and its digest before declaring the image
+   public/ready. A successful authenticated push alone is insufficient.
+
+While private, a deployment client needs a separately authorized login with
+package read access (outside CI, GitHub supports a PAT classic with `read:packages`).
+Keep it in the client's credential store, never the image, Compose file or git.
+The intended public deployment requires **no registry token**. CI publication uses
+only `GITHUB_TOKEN`, not a personal token.
 
 For local HTTP/CLI tests without downloading Chrome:
 
 ```sh
 PUPPETEER_SKIP_DOWNLOAD=true npm ci --no-audit --no-fund
 npm test
+node --test test/publish-policy.test.cjs
 ```
+
+The publication policy test parses the workflow/Compose YAML using the already
+locked `js-yaml` dependency. CI runs it in the built image without installing
+extra packages. It checks trigger/permission gates, test-before-push ordering,
+single-build tagging and pull-only Compose restrictions. Static tests do not
+replace a real master publication or an anonymous registry pull.
 
 These tests do **not** prove browser rendering or image compatibility.
 
 ## Compose example (not automatically deployed)
 
-`compose.example.yaml` is an example to review before deployment. On the intended
-Docker host, prepare a private YAML config **outside the repository**, readable by
-UID 1000. Do not put credentials or real dashboard URLs in this public repository.
-Then, only when deployment is authorized and the sandbox/runtime checks pass:
+`compose.example.yaml` uses the published image; there is no `build:` and no local
+source checkout or Node/npm install is needed on the server. After publication and
+public-access verification, copy only these non-secret deployment files from the
+same reviewed revision into a client deployment directory:
+
+- `compose.example.yaml`
+- `security/seccomp-chromium.json` (keep this relative path; Compose's Docker client
+  must be able to read it)
+- `security/apparmor-web2png` and `security/LICENSE.moby` where applicable.
+
+On an AppArmor host, an authorized administrator must load the dedicated profile
+on the Docker **host**, and enable `apparmor=web2png-browser` in the Compose file
+as described above. Copying the policy alone does not load it. Keep the private
+YAML config outside this directory/repository, readable by UID 1000. Do not put
+credentials or real dashboard URLs in this public repository. Check the proposed
+port and host sandbox compatibility before authorizing deployment. Then, from the
+client deployment directory:
 
 ```sh
 export WEB2PNG_CONFIG=/absolute/private/path/device-mappings.yaml
-docker compose -f compose.example.yaml build
-docker compose -f compose.example.yaml up -d
+# Default is latest; prefer a specific published version for production.
+export WEB2PNG_IMAGE=ghcr.io/maniekes/web2png:sha-FULL_PUBLISHED_COMMIT_SHA
+docker compose -f compose.example.yaml config --quiet
+docker compose -f compose.example.yaml pull
+docker compose -f compose.example.yaml up -d --no-build
 ```
+
+For a strict content pin, set `WEB2PNG_IMAGE` to
+`ghcr.io/maniekes/web2png@sha256:RECORDED_MANIFEST_DIGEST` instead. Record the prior
+working image reference and keep its matching policy files before upgrading.
+Rollback is explicit: restore that prior `WEB2PNG_IMAGE` and matching policy files,
+then repeat `pull` and `up -d --no-build`. Do not delete the old GHCR version until
+the rollback window has passed. Neither a push to master nor a moved `latest` tag
+updates a running server automatically.
 
 The config is explicitly mounted read-only at `/config/device-mappings.yaml`;
 Compose fails rather than creating a directory when the source is missing. It is
@@ -136,7 +217,7 @@ re-read on every screenshot request, so mounted configuration changes are visibl
 The proposed bind is **127.0.0.1:13001 → container:3001**. Port 13001 is an example,
 not a claim that it is available on the target host. Host port 3001 is deliberately
 avoided. Loopback-only access is not a remote-device integration by itself; choose
-any proxy/network integration separately. Compose uses a local image only and
+any proxy/network integration separately. Compose uses the GHCR image and
 `restart: unless-stopped`; no automatic image updater is included.
 
 `CONFIG_FILE` and `CONFIG_PORT` are explicit in the example. Keep `CONFIG_PORT`

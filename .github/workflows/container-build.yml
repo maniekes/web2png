@@ -1,0 +1,81 @@
+name: Build and test container
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: Publish the tested image (upstream master pushes only)
+        type: boolean
+        default: false
+# Permissions come from the caller: read-only for PRs/feature branches,
+# packages:write only for the upstream master publication job.
+jobs:
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build the image once
+        run: |
+          docker build --platform linux/amd64 --tag web2png:ci \
+            --label org.opencontainers.image.source=https://github.com/maniekes/web2png \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" .
+      - name: Check publication and Compose policy using image dependencies
+        run: |
+          docker run --rm --network none --cap-drop ALL --read-only \
+            --security-opt no-new-privileges:true \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/policy,readonly" \
+            --env NODE_PATH=/app/node_modules --entrypoint node web2png:ci \
+            --test /policy/test/publish-policy.test.cjs
+      - name: Load dedicated browser AppArmor profile on the ephemeral runner
+        run: sudo apparmor_parser -r security/apparmor-web2png
+      - name: Read-only namespace diagnostics
+        run: |
+          docker version --format '{{.Server.Version}}'
+          docker info --format '{{json .SecurityOptions}}'
+          for key in kernel.unprivileged_userns_clone kernel.apparmor_restrict_unprivileged_userns user.max_user_namespaces; do
+            sysctl "$key" || true
+          done
+          echo 'Host user namespace probe:'
+          unshare --user --map-root-user true || true
+          echo 'Container user namespace probe under intended restrictions:'
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --security-opt seccomp=security/seccomp-chromium.json --security-opt apparmor=web2png-browser --entrypoint /bin/sh web2png:ci -c 'id; cat /proc/self/attr/current; unshare --user --map-root-user true'
+      - name: Test sandbox, health, real rendering and lifecycle
+        env:
+          TEST_APPARMOR_PROFILE: web2png-browser
+        run: python3 test/container-smoke.py
+      - name: Unload the dedicated profile
+        if: always()
+        run: sudo apparmor_parser -R security/apparmor-web2png
+      - name: Publish the tested image to GHCR
+        # No status override: a failure in any preceding step prevents login/push.
+        if: inputs.publish && github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository == 'maniekes/web2png'
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=ghcr.io/maniekes/web2png
+          # Concurrency serializes master runs; also reject stale manual reruns.
+          master_sha=$(git ls-remote https://github.com/maniekes/web2png.git refs/heads/master | cut -f1)
+          test "$master_sha" = "$GITHUB_SHA" || { echo 'Refusing to publish a superseded master revision'; exit 1; }
+          export DOCKER_CONFIG="$RUNNER_TEMP/ghcr-auth"
+          mkdir -p "$DOCKER_CONFIG"
+          chmod 700 "$DOCKER_CONFIG"
+          trap 'docker logout ghcr.io; rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          # Do not intentionally replace a previously published SHA tag on rerun.
+          if docker manifest inspect "$image:sha-$GITHUB_SHA" >/dev/null 2>&1; then
+            echo 'SHA tag already exists; refusing to overwrite it'
+            exit 1
+          fi
+          image_id=$(docker image inspect web2png:ci --format '{{.Id}}')
+          docker tag "$image_id" "$image:sha-$GITHUB_SHA"
+          docker tag "$image_id" "$image:latest"
+          docker push "$image:sha-$GITHUB_SHA"
+          docker push "$image:latest"
+          # Read back both remote manifests; this is NOT anonymous/public proof.
+          docker manifest inspect "$image:sha-$GITHUB_SHA"
+          docker manifest inspect "$image:latest"
