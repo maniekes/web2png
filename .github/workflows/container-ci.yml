@@ -19,5 +19,16 @@ jobs:
           persist-credentials: false
       - name: Build local image (no registry publishing)
         run: docker build --platform linux/amd64 --tag web2png:ci .
+      - name: Read-only namespace diagnostics
+        run: |
+          docker version --format '{{.Server.Version}}'
+          docker info --format '{{json .SecurityOptions}}'
+          for key in kernel.unprivileged_userns_clone kernel.apparmor_restrict_unprivileged_userns user.max_user_namespaces; do
+            sysctl "$key" || true
+          done
+          echo 'Host user namespace probe:'
+          unshare --user --map-root-user true || true
+          echo 'Container user namespace probe under intended restrictions:'
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint /bin/sh web2png:ci -c 'id; cat /proc/self/attr/current; unshare --user --map-root-user true' || true
       - name: Test sandbox, health, real rendering and lifecycle
         run: python3 test/container-smoke.py
