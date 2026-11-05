@@ -41,16 +41,22 @@ def stopped():
 
 
 mounts = ['--mount', f'type=bind,src={ROOT / "test"},dst=/app/test,readonly',
+          '--mount', f'type=bind,src={ROOT / "security"},dst=/app/security,readonly',
           '--mount', f'type=bind,src={ROOT / "test/fixtures/synthetic-config.yaml"},dst=/config/device-mappings.yaml,readonly']
 hardening = ['--init', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
-             '--security-opt', 'no-new-privileges:true', '--shm-size', '256m',
+             '--security-opt', 'no-new-privileges:true',
+             '--security-opt', f'seccomp={ROOT / "security/seccomp-chromium.json"}',
+             '--shm-size', '256m',
              '--tmpfs', '/tmp:rw,nosuid,nodev,size=512m,mode=1777',
              '--tmpfs', '/home/node:rw,nosuid,nodev,size=64m,uid=1000,gid=1000,mode=700']
+
+if os.environ.get('TEST_APPARMOR_PROFILE'):
+    hardening += ['--security-opt', 'apparmor=' + os.environ['TEST_APPARMOR_PROFILE']]
 
 try:
     # Unit/HTTP tests also execute on the exact image Node/dependencies.
     docker('run', '--rm', *hardening, *mounts, '--entrypoint', 'node', IMAGE,
-           '--test', 'test/http.test.js')
+           '--test', 'test/http.test.js', 'test/runtime-policy.test.js')
     docker('run', '-d', '--name', NAME, *hardening, *mounts, IMAGE)
     healthy()
     assert inspect()['Config']['User'] == 'node'

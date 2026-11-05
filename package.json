@@ -5,7 +5,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/http.test.js",
+    "test": "node --test test/http.test.js test/runtime-policy.test.js",
     "start": "node web2png.js",
     "watch": "node --watch web2png.js"
   },

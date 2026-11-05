@@ -19,6 +19,8 @@ jobs:
           persist-credentials: false
       - name: Build local image (no registry publishing)
         run: docker build --platform linux/amd64 --tag web2png:ci .
+      - name: Load dedicated browser AppArmor profile on the ephemeral runner
+        run: sudo apparmor_parser -r security/apparmor-web2png
       - name: Read-only namespace diagnostics
         run: |
           docker version --format '{{.Server.Version}}'
@@ -29,6 +31,11 @@ jobs:
           echo 'Host user namespace probe:'
           unshare --user --map-root-user true || true
           echo 'Container user namespace probe under intended restrictions:'
-          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint /bin/sh web2png:ci -c 'id; cat /proc/self/attr/current; unshare --user --map-root-user true' || true
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges:true --security-opt seccomp=security/seccomp-chromium.json --security-opt apparmor=web2png-browser --entrypoint /bin/sh web2png:ci -c 'id; cat /proc/self/attr/current; unshare --user --map-root-user true'
       - name: Test sandbox, health, real rendering and lifecycle
+        env:
+          TEST_APPARMOR_PROFILE: web2png-browser
         run: python3 test/container-smoke.py
+      - name: Unload the dedicated profile
+        if: always()
+        run: sudo apparmor_parser -R security/apparmor-web2png

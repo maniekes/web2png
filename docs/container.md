@@ -29,7 +29,8 @@ using these same application/browser versions. Version upgrades are a later task
 The inspected Pageres/capture-website chain does **not** disable the Chrome
 sandbox. Neither this application nor the image adds `--no-sandbox` or
 `--disable-setuid-sandbox`. There is no privileged mode, `SYS_ADMIN`, host Docker
-socket, host networking or host security-policy change.
+socket or host networking. CI loads a dedicated AppArmor profile on its ephemeral
+runner; it does not disable a host-wide restriction or change the production host.
 
 The example runs as the image's `node` user (UID 1000), with an init, all capabilities
 dropped, no-new-privileges, a read-only root filesystem and bounded writable tmpfs
@@ -40,6 +41,31 @@ failed compatibility test, not permission to disable the sandbox.** CI emits a
 standalone launch diagnostic before rendering so the actual error is visible.
 Consult Puppeteer's official troubleshooting documentation for diagnosis; do not
 apply privileged/no-sandbox recipes automatically.
+
+The initial GitHub runner failed the namespace/browser probes under Docker's
+built-in policy. `security/seccomp-chromium.json` preserves the Moby v28.0.4
+Docker default profile, adding only `clone`, `setns` and `unshare` permissions
+so Chromium can construct its own unprivileged namespace sandbox. The baseline
+is in `test/fixtures/seccomp-moby-28.0.4.json`; its SHA-256 and the exact delta
+are checked by `test/runtime-policy.test.js`. This expands the permitted syscall
+surface and needs review, but does not add container capabilities or turn off
+seccomp. The pattern is documented in Playwright's Docker sandbox guidance.
+
+On AppArmor hosts, `security/apparmor-web2png` derives from Moby v28.0.4's default
+container profile, retaining its mount/proc/sys restrictions and adding `userns`.
+CI loads it as `web2png-browser` and selects it only for these test containers.
+It leaves global AppArmor/sysctl settings unchanged and unloads the profile after
+tests. On an authorized AppArmor test host, load this profile and set
+`TEST_APPARMOR_PROFILE=web2png-browser` before running the smoke script. For a real
+Compose deployment on such a host, explicitly select the loaded profile using
+`apparmor=web2png-browser` as indicated in the example. On hosts using another LSM,
+verify that host's policy separately; no AppArmor installation or SELinux changes
+are performed automatically. The seccomp profile must be available to the Docker
+client/Compose deployment process; it is not a file mounted into the application.
+
+Profile sources: Moby tag `v28.0.4`, `profiles/seccomp/default.json` and
+`profiles/apparmor/template.go`. Their Apache-2.0 license is included in
+`security/LICENSE.moby`. Do not replace these with an unconfined policy.
 
 The screenshot endpoint is unauthenticated and can fetch configured URLs, their
 redirects and subresources. Query parameters still allow expensive renders. Use

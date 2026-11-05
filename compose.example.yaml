@@ -16,6 +16,10 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+      - seccomp=./security/seccomp-chromium.json
+      # On an AppArmor host: load the dedicated profile first, then add
+      # - apparmor=web2png-browser
+      # See docs/container.md; never use apparmor=unconfined as a fallback.
     environment:
       CONFIG_FILE: /config/device-mappings.yaml
       CONFIG_PORT: "3001"
