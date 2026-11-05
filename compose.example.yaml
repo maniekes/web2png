@@ -1,9 +1,7 @@
 # Example only: not a deployment. See docs/container.md for blockers.
 services:
   web2png:
-    build:
-      context: .
-    image: web2png:local
+    image: ${WEB2PNG_IMAGE:-ghcr.io/maniekes/web2png:latest}
     platform: linux/amd64
     init: true
     restart: unless-stopped

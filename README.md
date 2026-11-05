@@ -5,10 +5,11 @@ devices or systems that require static image representations of dynamic web cont
 
 ## Container usage
 
-See [container build, compatibility tests and the Compose example](docs/container.md).
-The image keeps the current locked dependencies and browser; it does not publish or
-start a deployment automatically. Review the sandbox requirements and legacy-browser
-risk before use.
+See [container publishing, compatibility tests and pull-only deployment](docs/container.md).
+Successful `master` CI publishes `ghcr.io/maniekes/web2png`; PRs only build/test.
+The package owner must enable public visibility after first publication. The image
+keeps the locked dependencies/browser and does not deploy automatically. Review the
+sandbox requirements and legacy-browser risk before use.
 
 ## Background
 
