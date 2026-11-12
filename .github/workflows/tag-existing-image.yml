@@ -1,0 +1,49 @@
+name: Tag existing web2png 1.0.4 image
+on:
+  push:
+    branches: [maintenance/tag-existing-web2png-1.0.4]
+    paths: [.github/workflows/tag-existing-image.yml]
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: tag-existing-web2png-1.0.4
+  cancel-in-progress: false
+jobs:
+  tag:
+    if: github.repository == 'maniekes/web2png'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Alias existing manifest without rebuilding
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        shell: python
+        run: |
+          import os, json, base64, hashlib, urllib.request, urllib.error
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs): return None
+          op = urllib.request.build_opener(NoRedirect())
+          auth = base64.b64encode((os.environ['GHCR_USER'] + ':' + os.environ['GHCR_TOKEN']).encode()).decode()
+          req = urllib.request.Request('https://ghcr.io/token?service=ghcr.io&scope=repository:maniekes/web2png:pull,push', headers={'Authorization': 'Basic ' + auth})
+          with op.open(req, timeout=30) as r: token = json.load(r)['token']
+          base = 'https://ghcr.io/v2/maniekes/web2png/manifests/'
+          headers = {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}
+          def get(tag):
+              with op.open(urllib.request.Request(base + tag, headers=headers), timeout=30) as r:
+                  data = r.read()
+                  assert r.headers['Docker-Content-Digest'] == 'sha256:' + hashlib.sha256(data).hexdigest()
+                  return data, r.headers['Content-Type']
+          raw, content_type = get('sha-b28c00b6f6e39edfdf786dc75ffc00bf03edf5ad')
+          assert json.loads(raw)['config']['digest'] == 'sha256:a8ae465b571ffa2ade26d9ad98db52fac1f1b1401715f8ac72f062f3f45edb13'
+          try:
+              previous, _ = get('1.0.4')
+              assert previous == raw, 'Refusing to replace different version tag'
+          except urllib.error.HTTPError as e:
+              if e.code != 404: raise
+              req = urllib.request.Request(base + '1.0.4', data=raw, method='PUT', headers={'Authorization': 'Bearer ' + token, 'Content-Type': content_type})
+              with op.open(req, timeout=30) as r: assert r.status == 201
+          verified, _ = get('1.0.4')
+          assert verified == raw
+          print('Verified: 1.0.4 aliases the existing image; no build and no latest change.')
